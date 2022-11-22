@@ -18,13 +18,13 @@ It defines classes_and_methods
 '''
 
 import sys
-import os, re
+import os, re, glob
 import optparse
 
-from Bio import SeqIO
 from utils.util import Utils
 from constants.constants import Constants
 from utils.util import TransFactors
+from process.process_files import ProcessGFF
 
 __all__ = []
 __version__ = 0.1
@@ -47,6 +47,7 @@ def checkRequiredArguments(opts, parser):
 		if len(missing_options) > 0:
 			parser.error('Missing REQUIRED parameters: ' + str(missing_options))
 
+# $ module load samtools htslib bcftools mafft
 def main(argv=None):
 	'''Command line options.'''
 
@@ -91,11 +92,14 @@ Columns for sample comparison (equivalent to evolutionary time points)
 	
 	parser = MyParser(version=program_version_string, epilog=program_longdesc, description=program_license)
 	parser.add_option("-i", "--in", dest="infile", help="[REQUIRED] Transcription factors (fasta)", metavar="FILE")
-	parser.add_option("-p", "--path_in", dest="path_in", help="[REQUIRED] set input path with VCF samples", metavar="FILE")
+	parser.add_option("-p", "--vcf", dest="vcf", help="[REQUIRED] set input path with VCF samples", metavar="FILE")
 	parser.add_option("-r", "--reference_fasta", dest="reference_fasta", help="input fasta (reference)", metavar="FILE")
 	parser.add_option("-a", "--annotation_file_gff", dest="annotation_file_gff", help="input gff (annotation), look gor genes", metavar="FILE")
-	parser.add_option("-w", "--windown_size", dest="windown_size", help="Size of windows to analyse. Where the transcription factors are going to bind.")
+	parser.add_option("-w", "--windown_size", dest="windown_size",
+			help="Size of windows to analyse. Where the transcription factors are going to bind.",
+			default=1000)
 	parser.add_option("-o", "--out", dest="outfile", help="[REQUIRED] set output path", metavar="FILE")
+	parser.add_option("-s", "--sample_list", dest="sample_list", help="list of sample to order de output", metavar="FILE")
 	
 	# process options
 	(opts, args) = parser.parse_args(argv)
@@ -106,24 +110,32 @@ Columns for sample comparison (equivalent to evolutionary time points)
 		parser.print_help()
 		sys.exit()
 
+	if opts.windown_size is None: opts.windown_size = 1000
 	if opts.infile:              print("infile Trnascriptor Factors  %s" % opts.infile)
 	if opts.reference_fasta:     print("reference file               %s" % opts.reference_fasta)
 	if opts.annotation_file_gff: print("annotation_file_gff          %s" % opts.annotation_file_gff)
-	if opts.path_in:             print("path_in (with vcf)           %s" % opts.path_in)
+	if opts.vcf:                 print("path_in (with vcf)           %s" % opts.vcf)
 	if opts.outfile:             print("outfile                      %s" % opts.outfile)
+	if opts.windown_size:        print("windown_size                 %s" % opts.windown_size)
+	if opts.sample_list:         print("sample_list                  %s" % opts.sample_list)
 
-	# MAIN BODY #
+	### read transfactors
 	read_factors = TransFactors(opts.infile)
-
-	### test all files and make correspondence with paths
-	read_samples.test_vcfs(opts.path_in)
-
-	### read vcf files
-	read_samples.read_vcfs()
+	process_files = ProcessGFF(read_factors, opts.sample_list)
 	
-	### rad rna fasta
-	if opts.rna_fasta: read_samples.read_rna_fasta(opts.rna_fasta)
+	## get all vcf files
+	list_vcf_files = list(glob.glob(os.path.join(opts.vcf, "*.vcf.gz")))
+	if len(list_vcf_files) == 0:
+		sys.exit("Error: there's no vcf.gz files in that path - " + opts.path_in)
+
+	### list of genes to process
+	#lst_genes_to_process = ['C4_00010W_A'] 
+	lst_genes_to_process = []
 	
+	## process all data
+	size_window = 1000
+	process_files.process_gff(opts.reference_fasta, opts.annotation_file_gff, list_vcf_files, size_window,
+				opts.outfile, dict(zip(lst_genes_to_process, [1] * len(lst_genes_to_process))) )
 	print("Done")
 
 

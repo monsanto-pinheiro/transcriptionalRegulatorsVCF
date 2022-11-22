@@ -6,6 +6,7 @@ Created on 11/11/2022
 
 from gff3tool.lib.gff3 import Gff3
 import gzip, os, sys
+import socket
 from utils.util import Utils
 from constants.constants import Constants
 from Bio import SeqIO
@@ -31,7 +32,7 @@ class ProcessGFF(object):
 	'''
 
 	constants = Constants()
-	utils = Utils()
+	utils = Utils("trans_factor", "/tmp") 		### make it quick
 	vect_type_to_process = ['gene']
 	
 	def __init__(self, read_factors, sample_list = None):
@@ -71,9 +72,13 @@ class ProcessGFF(object):
 		run mafft
 		out: out_file
 		"""
-		cmd = "{}; {} {} --thread 2 {} > {}".format(self.constants.SOFTWARE_SET_ENV_MAFFT,\
-							self.constants.SOFTWARE_MAFFT_name,\
-							self.constants.SOFTWARE_MAFFT_PARAMETERS_TWO_SEQUENCES, input_file, out_file)
+		if socket.gethostname() == "cs-nb0008":
+			cmd = "{}; {} {} --thread 2 {} > {}".format(self.constants.SOFTWARE_SET_ENV_MAFFT,\
+					self.constants.SOFTWARE_MAFFT_name,\
+					self.constants.SOFTWARE_MAFFT_PARAMETERS_TWO_SEQUENCES, input_file, out_file)
+		else:
+			cmd = "{} {} --thread 2 {} > {}".format(self.constants.SOFTWARE_MAFFT_name,\
+					self.constants.SOFTWARE_MAFFT_PARAMETERS_TWO_SEQUENCES, input_file, out_file)
 		exist_status = os.system(cmd)
 		if (exist_status != 0):
 			raise Exception("Fail to run mafft: " + cmd)
@@ -93,7 +98,8 @@ class ProcessGFF(object):
 		return out_file
 		
 		
-	def correct_postions(self, dt_result_change, fasta_file_ref, fasta_file_change, start_pos):
+	def correct_postions(self, dt_result_change, fasta_file_ref, fasta_file_change, start_pos,
+				out_file_temp = None, input_file_temp = None):
 		"""
 		Correct positions
 		AACATTGTGAATGGG--AACCACCA
@@ -103,8 +109,8 @@ class ProcessGFF(object):
 		CHANGE_NAME = 'change'
 		
 		## first alignment the sequence
-		out_file = self.utils.get_temp_file("clustalo_out", ".fasta")
-		input_file = self.utils.get_temp_file("clustalo_in", ".fasta")
+		out_file = self.utils.get_temp_file("clustalo_out", ".fasta") if out_file_temp is None else out_file_temp
+		input_file = self.utils.get_temp_file("clustalo_in", ".fasta") if input_file_temp is None else input_file_temp
 		vect_record = []
 		with open(fasta_file_ref) as handle_read:
 			for record in SeqIO.parse(handle_read, "fasta"):
@@ -133,10 +139,16 @@ class ProcessGFF(object):
 					seq_ref = str(record_dict.seq).upper()
 				else:
 					seq_other = str(record_dict.seq).upper()
-		self.utils.remove_file(out_file)
-		
+
+		### check the length		
 		if len(seq_ref) != len(seq_other) or len(seq_ref) == 0:
-			sys.exit("Error: alignment sequences are different sizes or zero")
+			sys.exit("Error: alignment sequences are different sizes or zero." +\
+					"\nOutput file: " + out_file +\
+					"\nInput file: " + input_file)
+		
+		## remove file
+		if out_file_temp is None: self.utils.remove_file(out_file)
+		if input_file_temp is None: self.utils.remove_file(input_file)
 		
 		### create a dictonary with the translation
 		### start on zero
@@ -255,9 +267,13 @@ class ProcessGFF(object):
 		"""
 		Save the results
 		"""
-		b_gain_file = True if file_out.find(Constants.FILE_NAME_OUT_GAIN) != -1 else False
+		b_gain_file = True if file_out.find(Constants.FILE_NAME_OUT_GAIN) != -1 or \
+					file_out.find(Constants.FILE_NAME_OUT_EXTENDED_GAIN) != -1 else False
 		
 		### header Sample, then factors
+		self.utils.make_path(os.path.dirname(file_out))
+		
+		## process file
 		with open(file_out, 'w') as handle_out:
 			
 			### header Sample, then factors
@@ -278,20 +294,34 @@ class ProcessGFF(object):
 					for trans_factor in self.read_factors.get_names():
 						if trans_factor in dt_result[gene][sample][1 if b_gain_file else 0]:
 							has_data = True
-							sz_out += "\t{}".format(len(dt_result[gene][sample][1 if b_gain_file else 0][trans_factor]))
-						else: sz_out += "\t0"
+							if file_out.find(Constants.FILE_NAME_OUT_EXTENDED_GAIN) != -1 or \
+								file_out.find(Constants.FILE_NAME_OUT_EXTENDED_LOST) != -1:
+								sz_out += "\t" + ";".join([trans_factor_temp.get_info() for trans_factor_temp \
+										in dt_result[gene][sample][1 if b_gain_file else 0][trans_factor]])
+							else:
+								sz_out += "\t{}".format(len(dt_result[gene][sample][1 if b_gain_file else 0][trans_factor]))
+						else:
+							if file_out.find(Constants.FILE_NAME_OUT_EXTENDED_GAIN) != -1 or \
+								file_out.find(Constants.FILE_NAME_OUT_EXTENDED_LOST) != -1:
+								sz_out += "\t"
+							else:	
+								sz_out += "\t0"
 				sz_out += "\n"
 				if has_data: handle_out.write(sz_out)
 		print("File saved: " + file_out)
 		
-	def process_gff(self, ref_file, gff_file, list_vcf_files, size_window, out_path):
+		
+		
+	def process_gff(self, ref_file, gff_file, list_vcf_files, size_window, out_path, dt_gene_names = {}):
 		"""
 		Read a gff file
 		:param list of VCD files
+		:param dt_gene_names, list of genes to process, or, if empty, process all
 		"""
 		
 		dt_result = {}		## { SeqID : { sample_name : { lost_ref : [transfactor_1, transfactor_2... ], lost_gain : [transfactor_1, transfactor_2... ]}, {}),
 							##   SeqID_2 : { sample_name : [transfactor_1, transfactor_15... ]  
+		count_genes = 0
 		with (gzip.open(gff_file, mode='rt') if self.utils.is_gzip(gff_file) else open(gff_file, mode='r')) as handle_read:
 			gff = Gff3(handle_read)
 		
@@ -306,19 +336,38 @@ class ProcessGFF(object):
 				## 'attributes': {'ID': 'TY1/TY2_soloLTR:chrI:36933-37200:+', 'Name': 'TY1/TY2_soloLTR:chrI:36933-37200:+'}}
 				if line_gff['line_type'] == 'feature' and (line_gff['type'] in self.vect_type_to_process):
 
-					chr_name, position_start, position_end = line_gff['seqid'], line_gff['start'], line_gff['end']
+					gene_name = line_gff['attributes']['ID']
+					### check gene names
+					if (len(dt_gene_names) > 0 and not gene_name in dt_gene_names): continue
+					count_genes += 1
 					
+					chr_name, position_start, position_end = line_gff['seqid'], line_gff['start'], line_gff['end']
 					if line_gff['strand'] == '+':	## positve
 						position_end = position_start - 1
 						position_start -= size_window
 					else: 
 						position_start = position_end + 1
 						position_end += size_window 
+					
+					size_window_temp = size_window
+					if position_start < 1:
+						position_start = 1
+						size_window_temp = position_end - position_start
 						
+					##  info	
+					print("Processing gene ({}): ".format(count_genes) + \
+						gene_name + "  {}:{}-{}".format(chr_name, position_start, position_end) + \
+						"  Size window: {}".format(size_window_temp))
+					
 					### for each VCF file, of this gene, check
 					dt_result_vcf = {}
 					b_add_list_samples = True if len(self.vect_sample_list) == 0 else False
-					
+
+					## fasta file with ref
+					self.make_consensus(ref_file, "{}:{}-{}".format(chr_name, position_start, position_end), empty_vcf_file, slice_ref_file)
+					### get trans factors for ref file
+					dt_ref_factors = self.read_factors.get_match_factors_from_fasta(slice_ref_file, size_window_temp)
+						
 					for vcf_file in list_vcf_files:
 					
 						sample_name = os.path.basename(vcf_file).replace('.vcf.gz', '').replace('.vcf', '')
@@ -332,23 +381,21 @@ class ProcessGFF(object):
 						
 						## fasta file with changes 
 						self.make_consensus(ref_file, "{}:{}-{}".format(chr_name, position_start, position_end), vcf_file, slice_change_file)
-						## fasta file with no changes
-						self.make_consensus(ref_file, "{}:{}-{}".format(chr_name, position_start, position_end), empty_vcf_file, slice_ref_file)
-						
+
 						## Important, because the position is based on chromosome there is not necessary to reverse complement
 						### get trans factors for change file
-						dt_change_factors = self.read_factors.get_match_factors_from_fasta(slice_change_file, size_window)
+						dt_change_factors = self.read_factors.get_match_factors_from_fasta(slice_change_file, size_window_temp)
 						## because of insertions and deletions
 						dt_change_factors = self.correct_postions(dt_change_factors, slice_ref_file, slice_change_file, position_start)
-
-						### get trans factors for ref file
-						dt_ref_factors = self.read_factors.get_match_factors_from_fasta(slice_ref_file, size_window)
 
 						### get the difference
 						dt_result_vcf[os.path.basename(vcf_file).replace('.vcf.gz', '').replace('.vcf', '')] = \
 							self.get_diff_factors(dt_ref_factors, dt_change_factors)
-					dt_result[line_gff['attributes']['ID']] = dt_result_vcf
-
+					dt_result[gene_name] = dt_result_vcf
+					
+					## test limit
+					if count_genes > 100: break
+					
 			### save results...
 			self.utils.remove_file(empty_vcf_file)
 			self.utils.remove_file(slice_change_file)
@@ -358,4 +405,7 @@ class ProcessGFF(object):
 		### save files
 		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_GAIN))
 		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_LOST))
+		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_GAIN))
+		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_LOST))
+		
 

@@ -211,6 +211,12 @@ class Test(unittest.TestCase):
 		result_file_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files/results_2/" + Constants.FILE_NAME_OUT_LOST)
 		self.assertTrue(os.path.exists(result_file_name))
 		self.assertTrue(self.utils.test_equal_files(result_file_name, os.path.join(out_path, Constants.FILE_NAME_OUT_LOST)))
+		result_file_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files/results_2/" + Constants.FILE_NAME_OUT_EXTENDED_GAIN)
+		self.assertTrue(os.path.exists(result_file_name))
+		self.assertTrue(self.utils.test_equal_files(result_file_name, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_GAIN)))
+		result_file_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files/results_2/" + Constants.FILE_NAME_OUT_EXTENDED_LOST)
+		self.assertTrue(os.path.exists(result_file_name))
+		self.assertTrue(self.utils.test_equal_files(result_file_name, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_LOST)))
 		
 		self.utils.remove_dir(out_path)
 		

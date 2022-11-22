@@ -415,6 +415,9 @@ class TransFactorSmall(object):
 
 	def __str__(self):
 		return f"Name:{self.name} sequence:{self.sequence_found} position:{self.position_start}"
+	
+	def get_info(self):
+		return f"{self.name}:{self.sequence_found}:{self.position_start}"
 
 class TransFactor(object):
 	""" Trans Factor, forward and reverse """

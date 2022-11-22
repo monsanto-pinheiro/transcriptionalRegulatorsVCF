@@ -4,7 +4,6 @@ Created on Oct 15, 2016
 @author: mmp
 '''
 import socket
-from Bio.Align.Applications._ClustalOmega import ClustalOmegaCommandline
 
 class Constants(object):
 	'''
@@ -33,18 +32,23 @@ class Constants(object):
 	## software paths
 	BCFTOOLS = "/home/projects/flu/software/bcftools-1.5/bcftools" if socket.gethostname() == "cs-nb0008" else "bcftools"
 	
-	## software paths
+	## software paths, not USED
 	CLUSTALO = "clustalo"
 	
-	SOFTWARE_PATH = "/usr/local/software/insaflu/mafft-7.453-without-extensions"
-	SOFTWARE_SET_ENV_MAFFT = "export MAFFT_BINARIES={}/binaries".format(SOFTWARE_PATH)
-	SOFTWARE_MAFFT_name = "{}/scripts/mafft".format(SOFTWARE_PATH)
-	
+	if socket.gethostname() == "cs-nb0008":
+		SOFTWARE_PATH = "/usr/local/software/insaflu/mafft-7.453-without-extensions"
+		SOFTWARE_SET_ENV_MAFFT = "export MAFFT_BINARIES={}/binaries".format(SOFTWARE_PATH)
+		SOFTWARE_MAFFT_name = "{}/scripts/mafft".format(SOFTWARE_PATH)
+	else:
+		SOFTWARE_MAFFT_name = "mafft"
+		
 	SOFTWARE_MAFFT_PARAMETERS_TWO_SEQUENCES = "--maxiterate 1000 --localpair --preservecase --leavegappyregion --quiet"
 	
 	## File name out
 	FILE_NAME_OUT_GAIN = "trans_factors_gain.tsv"
 	FILE_NAME_OUT_LOST = "trans_factors_lost.tsv"
+	FILE_NAME_OUT_EXTENDED_GAIN = "trans_factors_extended_gain.tsv"
+	FILE_NAME_OUT_EXTENDED_LOST = "trans_factors_extended_lost.tsv"
 	
 	def __init__(self):
 		'''
