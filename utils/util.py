@@ -5,8 +5,10 @@ Created on 13/11/2018
 '''
 from Bio import SeqIO
 from constants.constants import Constants
+from gff3tool.lib.gff3 import Gff3
+import matplotlib.pyplot as plt
 import getpass, os, random, stat, gzip, re
-import sys
+import sys, time
 
 class Utils(object):
 	'''
@@ -404,15 +406,19 @@ class CigarElement(object):
 class TransFactorSmall(object):
 	""" Trans Factor, forward and reverse """
 	
-	def __init__(self, transfactor, sequence_found, position_start):
-		self.name = transfactor.name
+	def __init__(self, transfactor_name, sequence_found, position_start):
+		self.name = transfactor_name
 		self.sequence_found = sequence_found
 		self.position_start = position_start
 	
-	def __eq__(self, other):
-		return self.name == other.name and self.sequence_found == other.sequence_found \
-				and self.position_start == other.position_start
+#	def __eq__(self, other):
+#		return self.name == other.name and self.sequence_found == other.sequence_found \
+#				and self.position_start == other.position_start
 
+	def __eq__(self, other):
+		return self.name == other.name and \
+				self.position_start == other.position_start
+				
 	def __str__(self):
 		return f"Name:{self.name} sequence:{self.sequence_found} position:{self.position_start}"
 	
@@ -431,9 +437,46 @@ class TransFactor(object):
 		self.re_forward = re.compile(self.constants.ambiguos_to_unambiguous(sequence))
 		self.re_reverse = re.compile(self.constants.reverse_complement(self.constants.ambiguos_to_unambiguous(sequence)))
 	
+		## create the bit forward and reverse
+		self.create_bit_sequence()
+		
 	def get_pattern(self, b_reverse):
 		return self.re_reverse if b_reverse else self.re_forward
 
+	def create_bit_sequence(self):
+		"""
+		Create a dict with index and bit { 0 : 0b0010,  1 : 0b0001, 2 : 0b01000, 3 : 0b00100, ...}
+		"""
+		self.dt_bit_sequence = self.constants.ambiguos_to_unambiguous_dict_bit(self.sequence)
+	
+	def is_match(self, position, bit_base):
+		"""
+		:out True if match with the base
+		"""
+		if position >= len(self.dt_bit_sequence): return True
+		if int(bit_base & self.dt_bit_sequence[position]) > 0: return True
+		return False
+		
+	def get_match_bit(self, post_start, sequence_fasta):
+		"""
+		:out vect_data [TransFactorSmall, TransFactorSmall, ...]
+		"""
+		vect_out = []
+		for index in range(len(sequence_fasta) - len(self.dt_bit_sequence) + 1):
+			b_found = True
+			for index_trans in range(len(self.dt_bit_sequence)):
+				try:
+					if int(self.dt_bit_sequence[index_trans] & self.constants.dt_ambigous_bits[sequence_fasta[index + index_trans]]) == 0:
+						b_found = False
+						break
+				except KeyError as e:
+					b_found = False
+					break
+			
+			if b_found:
+				vect_out.append(TransFactorSmall(self.name, sequence_fasta[index: index + index_trans + 1], index + post_start))
+		return vect_out
+	
 class TransFactors(object):
 	""" dictonary with Trans Factors """
 	def __init__(self, file_name):
@@ -471,6 +514,7 @@ class TransFactors(object):
 
 	def get_match_factors_from_fasta(self, slice_change_file, window, b_reverse = False):
 		"""
+		Remove * from the sequence
 		:param b_reverse, true if reversed
 		try to find all trans factors
 		:out dt_trans_out: {tras_name : [TransFactor + pos1, TransFactor + pos2], 
@@ -489,10 +533,222 @@ class TransFactors(object):
 					for findRe in re.finditer(self.dt_trans_factors[key].get_pattern(b_reverse), sequence_fasta):
 						n_start = findRe.start()
 						end = findRe.end()
-						trans_factor = TransFactorSmall(self.dt_trans_factors[key], str(findRe.group()), 
+						trans_factor = TransFactorSmall(self.dt_trans_factors[key].name, str(findRe.group()), 
 							pos_start + window - end if b_reverse else pos_start + n_start)
 						if key in dt_trans_out: dt_trans_out[key].append(trans_factor)
 						else: dt_trans_out[key] = [trans_factor]
 		return dt_trans_out
+	
+	
+	def get_match_factors_from_fasta_through_bit(self, slice_change_file):
+		"""
+		Remove * from the sequence
+		:param b_reverse, true if reversed
+		try to find all trans factors
+		:out dt_trans_out: {tras_name : [TransFactor + pos1, TransFactor + pos2], 
+						tras_name_2 : [TransFactor + pos1, TransFactor + pos2]
+						}
+		"""
+		dt_trans_out = {}
+		with open(slice_change_file) as handle_read:
+			for record in SeqIO.parse(handle_read, "fasta"):
+				#pos_start, pos_end = int(record.id.split(':')[1].split('-')[0]), int(record.id.split(':')[1].split('-')[1])
+				pos_start = int(record.id.split(':')[1].split('-')[0])
+				sequence_fasta = str(record.seq).replace("*", "")
+				
+				## only works on forward
+				for key in self.dt_trans_factors:
+					vect_result = self.dt_trans_factors[key].get_match_bit(pos_start, sequence_fasta)
+					if len(vect_result) > 0: dt_trans_out[key] = vect_result
+		return dt_trans_out
 
 
+class Gene(object):
+	
+	def __init__(self, name, chromosome, start, end, strand):
+	
+		self.name = name
+		self.chromosome = chromosome
+		self.start = start
+		self.end = end
+		self.strand = strand
+		
+	def is_forward(self):
+		return self.strand == '+'
+	
+	def __str__(self):
+		return "Gene: {}   Position: {}:({}) {}-{}".format(self.name, self.chromosome,
+				self.strand, self.start, self.end)
+
+class Genes(object):
+	
+	## type to process
+	vect_type_to_process = ['gene']
+	utils = Utils()
+	
+	def __init__(self, file_name_gff):
+
+		self.dt_chromossomes = {}
+		self._process_genes(file_name_gff)
+	
+	def _process_genes(self, file_name_gff):
+		
+		with (gzip.open(file_name_gff, mode='rt') if self.utils.is_gzip(file_name_gff) else open(file_name_gff, mode='r')) as handle_read:
+			gff = Gff3(handle_read)
+		
+			for line_gff in gff.lines:
+				## {'line_index': 34, 'line_raw': 'chrI\tS01\tTY1/TY2_soloLTR\t36933\t37200\t.\t+\t.\tID=TY1/TY2_soloLTR:chrI:36933-37200:+;Name=TY1/TY2_soloLTR:chrI:36933-37200:+\n', 
+				## 'line_status': 'normal', 'parents': [], 'children': [], 'line_type': 'feature', 'directive': '', 'line_errors': [], 'type': 'TY1/TY2_soloLTR', 'seqid': 'chrI', 'source': 'S01', 'start': 36933, 'end': 37200, 'score': '.', 'strand': '+', 'phase': '.', 
+				## 'attributes': {'ID': 'TY1/TY2_soloLTR:chrI:36933-37200:+', 'Name': 'TY1/TY2_soloLTR:chrI:36933-37200:+'}}
+				if line_gff['line_type'] == 'feature' and (line_gff['type'] in self.vect_type_to_process):
+
+					gene_name = line_gff['attributes']['ID']
+					chr_name, position_start, position_end = line_gff['seqid'], line_gff['start'], line_gff['end']
+					
+					gene = Gene(gene_name, chr_name, position_start, position_end, line_gff['strand'])
+					if chr_name in self.dt_chromossomes: self.dt_chromossomes[chr_name].append(gene)
+					else: self.dt_chromossomes[chr_name] = [gene]
+		
+	def get_genes(self, chromosome, size_window = -1):
+		"""
+		:out list of genes
+		"""
+		vect_return = []
+		if chromosome in self.dt_chromossomes:
+			## if not has size return all
+			if size_window == -1: return self.dt_chromossomes[chromosome]
+			## 
+			for index, gene in enumerate(self.dt_chromossomes[chromosome]):
+				if gene.is_forward():
+					if index == 0: continue
+					distance = self.dt_chromossomes[chromosome][index].start - self.dt_chromossomes[chromosome][index - 1].end
+				else:
+					if index == (len(self.dt_chromossomes[chromosome]) - 1): continue
+					distance = self.dt_chromossomes[chromosome][index + 1].end - self.dt_chromossomes[chromosome][index].start
+				if distance >= size_window: vect_return.append(gene)
+			return vect_return
+		return []
+
+	def print_all_genes_by_chr(self, chr_name):
+		""" print all genes """
+		for gene in self.get_genes(chr_name):
+			print(gene)
+	
+	def get_all_chromosomes(self):
+		""" return all chromosomes from dictonary """
+		return list(self.dt_chromossomes.keys())
+
+
+	def create_histogram(self, out_file, number_bins = 10, max_distance = 6000, window = 1000):
+		"""
+		create file with histogram
+		"""
+		
+		vect_distances = []
+		vect_distances_till_windown = []
+		for key in self.dt_chromossomes:
+			for index, gene in enumerate(self.dt_chromossomes[key]):
+				if gene.is_forward():
+					if index == 0: continue
+					distance = self.dt_chromossomes[key][index].start - self.dt_chromossomes[key][index - 1].end
+				else:
+					if index == (len(self.dt_chromossomes[key]) - 1): continue
+					distance = self.dt_chromossomes[key][index + 1].end - self.dt_chromossomes[key][index].start
+				if distance > 0: vect_distances.append(distance if distance < max_distance else max_distance)
+				if distance < window and distance > 0: vect_distances_till_windown.append(distance)
+				if distance < 0:
+					print(distance, gene)
+#		plt.hist(vect_distances, bins=number_bins)
+#		plt.title('Distance between genes')
+#		plt.ylabel('Number of genes')
+#		plt.xlabel('Distance (distance > {} = {})'.format(max_distance, max_distance))
+#		plt.savefig(out_file)
+		
+		plt.hist(vect_distances_till_windown, bins=number_bins)
+		plt.title('Distance between genes')
+		plt.ylabel('Number of genes')
+		plt.xlabel('Distance (distance < window {})'.format(window))
+		plt.savefig(os.path.splitext(out_file)[0] + "_less_than_window_{}".format(window) + \
+				os.path.splitext(out_file)[1])
+		
+		
+	def collect_gene_affected(self, promotor_window):
+		"""
+		If some gene has less than the promoter window, it could be in 
+		"""
+		pass
+	
+class ProcessorThreading(object):
+	
+	PROCESS_TO_RUN = 8
+	SLEEP_TIME_BETWEEN_ALL_END = 20		##
+	
+	def __init__(self):
+		#self.vect_manage_process = []
+		self.vect_manage_process = self.PROCESS_TO_RUN * [-1]
+		self.number_forks = 0
+		self._is_to_fork = True
+
+	def search_end_process(self):
+		#test all process in the list
+		for i in range(self.PROCESS_TO_RUN):
+			if (self.vect_manage_process[i] != -1 and self.vect_manage_process[i] != 111010001):
+				# print "find Process %d" % (self.vect_manage_process[i])
+				try:
+					(p, v) = os.waitpid(self.vect_manage_process[i], os.WNOHANG)
+				except ChildProcessError as e:
+					if (str(e) == "[Errno 10] No child processes"):
+						self.vect_manage_process[i] = -1 # process already finish
+						p = 0
+					else:
+						raise e
+				if (p != 0): self.vect_manage_process[i] = -1 # process already finish
+
+	def is_all_end(self):
+		"""
+		Test if is all end
+		"""
+		if not self.is_to_fork(): return True
+		
+		nCount = 0 
+		self.search_end_process()
+		for nProcess in self.vect_manage_process:
+			if (nProcess == -1): nCount += 1
+		if (nCount == self.PROCESS_TO_RUN): return True
+		return False
+	
+	def is_all_end_with_time(self):
+		""" Test if all end """
+		if not self.is_to_fork(): return
+		
+		while 1:
+			time.sleep(self.SLEEP_TIME_BETWEEN_ALL_END)
+			if (self.is_all_end()): break
+
+	def get_pos_process(self):
+		## not to fork
+		if not self.is_to_fork(): return 0
+		
+		while 1:
+			self.search_end_process()
+			for i in range(self.PROCESS_TO_RUN):
+				if (self.vect_manage_process[i] == -1 and self.vect_manage_process[i] != 111010001):
+					self.vect_manage_process[i] = 111010001	#put some data to prevent to others alloc in the same spot
+					return i
+			time.sleep(10) # in seconds
+		return -1
+	
+	def add_number_forks(self):
+		if self.is_to_fork(): self.number_forks += 1
+		else: self.number_forks = 1
+
+	def get_number_forks(self):
+		if not self.is_to_fork(): return 1
+		return self.number_forks
+	
+	def set_not_forking(self):
+		""" set fork off, good for testing """
+		self._is_to_fork = False
+		
+	def is_to_fork(self):
+		return self._is_to_fork

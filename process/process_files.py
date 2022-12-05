@@ -4,10 +4,9 @@ Created on 11/11/2022
 @author: mmp
 '''
 
-from gff3tool.lib.gff3 import Gff3
-import gzip, os, sys
+import os, sys, time
 import socket
-from utils.util import Utils
+from utils.util import Utils, ProcessorThreading, Genes
 from constants.constants import Constants
 from Bio import SeqIO
 from Bio.Seq import Seq
@@ -26,25 +25,29 @@ class Gene(object):
 		self.chr_name = chr_name
 	
 	
-class ProcessGFF(object):
+class ProcessGFF(ProcessorThreading):
 	'''
 	classdocs
 	'''
-
+	
+	PREFIX_NAME = "slice"
 	constants = Constants()
 	utils = Utils("trans_factor", "/tmp") 		### make it quick
-	vect_type_to_process = ['gene']
 	
 	def __init__(self, read_factors, sample_list = None):
 		'''
 		Constructor
 		'''
+		super(ProcessGFF, self).__init__()
 		self.read_factors = read_factors
 		
 		## has the sample list for the output
 		self.vect_sample_list = []
 		if not sample_list is None and os.path.exists(sample_list):
 			self.vect_sample_list = self.utils.read_text_file(sample_list)
+		
+		### not to fork
+		# self.set_not_forking()
 		
 	def get_vcf_header(self, file_name):
 		"""
@@ -98,7 +101,7 @@ class ProcessGFF(object):
 		return out_file
 		
 		
-	def correct_postions(self, dt_result_change, fasta_file_ref, fasta_file_change, start_pos,
+	def correct_positions(self, dt_result_change, fasta_file_ref, fasta_file_change, start_pos,
 				out_file_temp = None, input_file_temp = None):
 		"""
 		Correct positions
@@ -274,75 +277,136 @@ class ProcessGFF(object):
 		self.utils.make_path(os.path.dirname(file_out))
 		
 		## process file
-		with open(file_out, 'w') as handle_out:
+		for factor in self.read_factors.get_names():
+			file_out_temp = os.path.join(os.path.dirname(file_out), factor, os.path.basename(file_out))
+			self.utils.make_path(os.path.dirname(file_out_temp))
+			with open(file_out_temp, 'w') as handle_out:
 			
-			### header Sample, then factors
-			handle_out.write("\t" + "\t".join([sample_name + "\t" * (self.read_factors.get_length() -1) for sample_name in self.vect_sample_list]) + "\n")
-			handle_out.write("Genes" + ("\t" + "\t".join(self.read_factors.get_names())) * len(self.vect_sample_list) + "\n")
-		
-			## 
-			for gene in dt_result:
-				has_data = False
-				sz_out = "{}".format(gene)
-				
-				if len(dt_result[gene]) == 0:
-					handle_out.write("\n")
-					continue
-				
-				for sample in self.vect_sample_list:
+				### header Sample, then factors
+				handle_out.write("Genes\t" + "\t".join(self.vect_sample_list) + "\n")
+				#handle_out.write("Genes" + ("\t" + "\t".join([factor] * len(self.vect_sample_list)) + "\n"))
+			
+				###
+				lines_saved = 0
+				for gene in dt_result:
+					has_data = False
+					sz_out = "{}".format(gene)
 					
-					for trans_factor in self.read_factors.get_names():
-						if trans_factor in dt_result[gene][sample][1 if b_gain_file else 0]:
+					if len(dt_result[gene]) == 0:
+						handle_out.write("\n")
+						continue
+					
+					for sample in self.vect_sample_list:
+						if factor in dt_result[gene][sample][1 if b_gain_file else 0]:
 							has_data = True
+							lines_saved += 1
 							if file_out.find(Constants.FILE_NAME_OUT_EXTENDED_GAIN) != -1 or \
 								file_out.find(Constants.FILE_NAME_OUT_EXTENDED_LOST) != -1:
 								sz_out += "\t" + ";".join([trans_factor_temp.get_info() for trans_factor_temp \
-										in dt_result[gene][sample][1 if b_gain_file else 0][trans_factor]])
+										in dt_result[gene][sample][1 if b_gain_file else 0][factor]])
 							else:
-								sz_out += "\t{}".format(len(dt_result[gene][sample][1 if b_gain_file else 0][trans_factor]))
+								sz_out += "\t{}".format(len(dt_result[gene][sample][1 if b_gain_file else 0][factor]))
 						else:
 							if file_out.find(Constants.FILE_NAME_OUT_EXTENDED_GAIN) != -1 or \
 								file_out.find(Constants.FILE_NAME_OUT_EXTENDED_LOST) != -1:
 								sz_out += "\t"
 							else:	
 								sz_out += "\t0"
-				sz_out += "\n"
-				if has_data: handle_out.write(sz_out)
-		print("File saved: " + file_out)
+					sz_out += "\n"
+					if has_data: handle_out.write(sz_out)
+			
+			### if none of factor saved it will remove the file
+			if lines_saved == 0: self.utils.remove_file(file_out_temp)
+				
+		#print("File saved: " + file_out_temp)
+		
+	
+	def join_files(self, genes, out_path, file_name, b_remove_slice_files = False):
+		"""
+		join all files
+		"""
+		## process file
+		dt_out = {}
+		for factor in self.read_factors.get_names():
+			
+			first_file = True
+			file_out = os.path.join(out_path, factor, file_name)
+			lines_per_factor = 0
+			for index_chromosome in range(len(genes.get_all_chromosomes())):
+				
+				file_out_temp = os.path.join(out_path, factor, "{}_{}_{}".format(self.PREFIX_NAME,
+					index_chromosome, file_name))
+				if not os.path.exists(file_out_temp): continue
+				if first_file: cmd = "cat {} >> {}".format(file_out_temp, file_out)
+				else: cmd = "tail -n+2 {} >> {}".format(file_out_temp, file_out)
+				os.system(cmd)
+				first_file = False
+				
+				lines_per_factor += len(self.utils.read_text_file(file_out_temp)) - 1
+
+			## set stats			
+			dt_out[factor] = lines_per_factor
+			
+			## remove all slice files, only create a file to no raise exception in remove of all "slice_" files
+			if (b_remove_slice_files):
+				cmd = "touch {}__".format(os.path.join(out_path, factor, self.PREFIX_NAME))
+				os.system(cmd)
+				cmd = "rm {}*".format(os.path.join(out_path, factor, self.PREFIX_NAME))
+				os.system(cmd)
+		return dt_out	## result of factor
 		
 		
-		
-	def process_gff(self, ref_file, gff_file, list_vcf_files, size_window, out_path, dt_gene_names = {}):
+	def process_gff(self, ref_file, gff_file, list_vcf_files, size_window, out_path, dt_gene_names = {},
+				only_genes_with_distance = -1):
 		"""
 		Read a gff file
 		:param list of VCD files
 		:param dt_gene_names, list of genes to process, or, if empty, process all
 		"""
 		
-		dt_result = {}		## { SeqID : { sample_name : { lost_ref : [transfactor_1, transfactor_2... ], lost_gain : [transfactor_1, transfactor_2... ]}, {}),
-							##   SeqID_2 : { sample_name : [transfactor_1, transfactor_15... ]  
 		count_genes = 0
-		with (gzip.open(gff_file, mode='rt') if self.utils.is_gzip(gff_file) else open(gff_file, mode='r')) as handle_read:
-			gff = Gff3(handle_read)
 		
-			### fasta files
-			slice_change_file = self.utils.get_temp_file("slice_change_file", ".fasta") 
-			slice_ref_file = self.utils.get_temp_file("slice_ref_file", ".fasta")
-			empty_vcf_file = self.get_vcf_header(list_vcf_files[0])
+		### read all genes
+		genes = Genes(gff_file)
+	
+		### empty VCF file, for all threads
+		empty_vcf_file = self.get_vcf_header(list_vcf_files[0])
+		
+		## for each chromosome
+		for index_chromosome, chromosome in enumerate(genes.get_all_chromosomes()): 
 			
-			for line_gff in gff.lines:
-				## {'line_index': 34, 'line_raw': 'chrI\tS01\tTY1/TY2_soloLTR\t36933\t37200\t.\t+\t.\tID=TY1/TY2_soloLTR:chrI:36933-37200:+;Name=TY1/TY2_soloLTR:chrI:36933-37200:+\n', 
-				## 'line_status': 'normal', 'parents': [], 'children': [], 'line_type': 'feature', 'directive': '', 'line_errors': [], 'type': 'TY1/TY2_soloLTR', 'seqid': 'chrI', 'source': 'S01', 'start': 36933, 'end': 37200, 'score': '.', 'strand': '+', 'phase': '.', 
-				## 'attributes': {'ID': 'TY1/TY2_soloLTR:chrI:36933-37200:+', 'Name': 'TY1/TY2_soloLTR:chrI:36933-37200:+'}}
-				if line_gff['line_type'] == 'feature' and (line_gff['type'] in self.vect_type_to_process):
-
-					gene_name = line_gff['attributes']['ID']
+			### set data to forks	
+			n_pos_vect = self.get_pos_process()
+			if (n_pos_vect == -1):
+				raise Exception("Error getting a process ID {}".format(time.ctime()))
+		
+			### count number of files
+			self.add_number_forks()
+		
+			###
+			if self.is_to_fork(): new_ID = os.fork()
+			else: new_ID = 0
+			
+			if new_ID < 0:
+				raise Exception("Error forking the main process, time: %s"  % time.ctime())
+			elif new_ID == 0: # is the child
+				
+				### fasta files
+				dt_result = {}		## { SeqID : { sample_name : { lost_ref : [transfactor_1, transfactor_2... ], lost_gain : [transfactor_1, transfactor_2... ]}, {}),
+							##   SeqID_2 : { sample_name : [transfactor_1, transfactor_15... ]  
+				slice_change_file = self.utils.get_temp_file("slice_change_file", ".fasta") 
+				slice_ref_file = self.utils.get_temp_file("slice_ref_file", ".fasta")
+				out_file = self.utils.get_temp_file("clustalo_out", ".fasta")
+				input_file = self.utils.get_temp_file("clustalo_in", ".fasta")
+			
+				## for all gene
+				for gene in genes.get_genes(chromosome, only_genes_with_distance):
 					### check gene names
-					if (len(dt_gene_names) > 0 and not gene_name in dt_gene_names): continue
+					if (len(dt_gene_names) > 0 and not gene.name in dt_gene_names): continue
 					count_genes += 1
 					
-					chr_name, position_start, position_end = line_gff['seqid'], line_gff['start'], line_gff['end']
-					if line_gff['strand'] == '+':	## positve
+					position_start, position_end = gene.start, gene.end
+					if gene.is_forward():	## positve
 						position_end = position_start - 1
 						position_start -= size_window
 					else: 
@@ -356,7 +420,7 @@ class ProcessGFF(object):
 						
 					##  info	
 					print("Processing gene ({}): ".format(count_genes) + \
-						gene_name + "  {}:{}-{}".format(chr_name, position_start, position_end) + \
+						gene.name + "  {}:{}-{}".format(chromosome, position_start, position_end) + \
 						"  Size window: {}".format(size_window_temp))
 					
 					### for each VCF file, of this gene, check
@@ -364,9 +428,10 @@ class ProcessGFF(object):
 					b_add_list_samples = True if len(self.vect_sample_list) == 0 else False
 
 					## fasta file with ref
-					self.make_consensus(ref_file, "{}:{}-{}".format(chr_name, position_start, position_end), empty_vcf_file, slice_ref_file)
+					self.make_consensus(ref_file, "{}:{}-{}".format(chromosome, position_start, position_end), empty_vcf_file, slice_ref_file)
 					### get trans factors for ref file
-					dt_ref_factors = self.read_factors.get_match_factors_from_fasta(slice_ref_file, size_window_temp)
+					#dt_ref_factors = self.read_factors.get_match_factors_from_fasta(slice_ref_file, size_window_temp)
+					dt_ref_factors = self.read_factors.get_match_factors_from_fasta_through_bit(slice_ref_file)
 						
 					for vcf_file in list_vcf_files:
 					
@@ -380,32 +445,82 @@ class ProcessGFF(object):
 						## slice_vcf_file_corrected = self.get_slice_vcf(vcf_file, chr_name, position_start, position_end)
 						
 						## fasta file with changes 
-						self.make_consensus(ref_file, "{}:{}-{}".format(chr_name, position_start, position_end), vcf_file, slice_change_file)
+						self.make_consensus(ref_file, "{}:{}-{}".format(chromosome, position_start, position_end), vcf_file, slice_change_file)
 
 						## Important, because the position is based on chromosome there is not necessary to reverse complement
 						### get trans factors for change file
-						dt_change_factors = self.read_factors.get_match_factors_from_fasta(slice_change_file, size_window_temp)
+						#dt_change_factors = self.read_factors.get_match_factors_from_fasta(slice_change_file, size_window_temp)
+						dt_change_factors = self.read_factors.get_match_factors_from_fasta_through_bit(slice_change_file)
 						## because of insertions and deletions
-						dt_change_factors = self.correct_postions(dt_change_factors, slice_ref_file, slice_change_file, position_start)
+						dt_change_factors = self.correct_positions(dt_change_factors, slice_ref_file, slice_change_file,
+									position_start, out_file, input_file)
 
 						### get the difference
 						dt_result_vcf[os.path.basename(vcf_file).replace('.vcf.gz', '').replace('.vcf', '')] = \
 							self.get_diff_factors(dt_ref_factors, dt_change_factors)
-					dt_result[gene_name] = dt_result_vcf
+					
+					### semaphore
+					dt_result[gene.name] = dt_result_vcf
 					
 					## test limit
-					if count_genes > 100: break
-					
-			### save results...
-			self.utils.remove_file(empty_vcf_file)
-			self.utils.remove_file(slice_change_file)
-			self.utils.remove_file(slice_ref_file)
+					#if count_genes > 5: break
+			
+				## remove temp files
+				self.utils.remove_file(slice_change_file)
+				self.utils.remove_file(slice_ref_file)
+				self.utils.remove_file(input_file)
+				self.utils.remove_file(out_file)
+				
+				### save files
+				self.save_result_file(dt_result, os.path.join(out_path, "{}_{}_".format(self.PREFIX_NAME,
+						index_chromosome) + Constants.FILE_NAME_OUT_GAIN))
+				self.save_result_file(dt_result, os.path.join(out_path, "{}_{}_".format(self.PREFIX_NAME,
+						index_chromosome) + Constants.FILE_NAME_OUT_LOST))
+				self.save_result_file(dt_result, os.path.join(out_path, "{}_{}_".format(self.PREFIX_NAME,
+						index_chromosome) + Constants.FILE_NAME_OUT_EXTENDED_GAIN))
+				self.save_result_file(dt_result, os.path.join(out_path, "{}_{}_".format(self.PREFIX_NAME,
+						index_chromosome) + Constants.FILE_NAME_OUT_EXTENDED_LOST))
+				
+				### kill the thread
+				if self.is_to_fork(): sys.exit(0)
+				
+			### 
+			else: self.vect_manage_process[n_pos_vect] = new_ID # is the prent but the ID is from the child
+			
+		## test number of forks
+		if self.get_number_forks() == 0:
+			raise Exception("There's no coverage data to process.")
 
+		print("Number of forks: {}".format(self.get_number_forks()))
+		### waiting all process
+		self.is_all_end_with_time()
 
-		### save files
-		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_GAIN))
-		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_LOST))
-		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_GAIN))
-		self.save_result_file(dt_result, os.path.join(out_path, Constants.FILE_NAME_OUT_EXTENDED_LOST))
+		### remove temp file
+		self.utils.remove_file(empty_vcf_file)
+
+		### join files
+		dt_out = {}
+		for index, type_file in enumerate(Constants.VECT_FILES):
+			dt_out[type_file] = self.join_files(genes, out_path, type_file,
+				index == (len(Constants.VECT_FILES) - 1))
 		
+		## save stats
+		file_name = os.path.join(out_path, Constants.FILE_NAME_RESULTS_STATS)
+		with open(file_name, 'w') as handle_out:
+			handle_out.write("Number of genes identified with transcription factors in all samples\n" +\
+							"Factor\t{}\t{}\t{}\t{}\n".format(
+				os.path.splitext(Constants.FILE_NAME_OUT_GAIN)[0],
+				os.path.splitext(Constants.FILE_NAME_OUT_LOST)[0],
+				os.path.splitext(Constants.FILE_NAME_OUT_EXTENDED_GAIN)[0],
+				os.path.splitext(Constants.FILE_NAME_OUT_EXTENDED_LOST)[0]))
+
+			## roll all factors
+			for factor in self.read_factors.get_names():
+				sz_out = "{}".format(factor)
+				for type_file in Constants.VECT_FILES:
+					if factor in dt_out[type_file]: sz_out += "\t{}".format(dt_out[type_file][factor])
+					else: sz_out += "\t0"
+				handle_out.write(sz_out + "\n")
+
+		print("Stats file: " + file_name)
 

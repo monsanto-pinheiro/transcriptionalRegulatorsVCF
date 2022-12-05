@@ -16,15 +16,15 @@ class Test(unittest.TestCase):
 		self.assertEqual(constants.complement("AAATTGGGTCCC"), "TTTAACCCAGGG", "must be equal")
 		self.assertEqual(constants.reverse_complement("AAGGGATTTCCC"), "GGGAAATCCCTT", "must be equal")
 		self.assertEqual(constants.reverse_complement("AAATTAGTCCC"), "GGGACTAATTT", "must be equal")
-		self.assertEqual(constants.ambiguos_to_unambiguous("YARWATTTCCC"), "[TC]A[AG][AT]ATTTCCC", "must be equal")
-		self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN"), "[AG][TC][GT][AC][GC][AT][CGT][AGT][ACT][ACG][ACGT]", "must be equal")
+		self.assertEqual(constants.ambiguos_to_unambiguous("YARWATTTCCC"), "[CT]A[AG][AT]ATTTCCC", "must be equal")
+		self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN"), "[AG][CT][GT][AC][CG][AT][CGT][AGT][ACT][ACG][ACGT]", "must be equal")
 		self.assertEqual(constants.complement("RYKMSWBDHVN"), "YRMKSWVHDBN", "must be equal")
 
-		self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN{3}"), "[AG][TC][GT][AC][GC][AT][CGT][AGT][ACT][ACG][ACGT][ACGT][ACGT]", "must be equal")
-		self.assertEqual(constants.ambiguos_to_unambiguous("GGAGGC(G/A)C(T/A)G"), "GGAGGC[GA]C[TA]G", "must be equal")
+		self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN{3}"), "[AG][CT][GT][AC][CG][AT][CGT][AGT][ACT][ACG][ACGT][ACGT][ACGT]", "must be equal")
+		self.assertEqual(constants.ambiguos_to_unambiguous("GGAGGC(G/A)C(T/A)G"), "GGAGGC[AG]C[AT]G", "must be equal")
 		
 		try:
-			self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN{3"), "[AG][TC][GT][AC][GC][AT][CGT][AGT][ACT][ACG][ACGT][ACGT][ACGT]", "must be equal")
+			self.assertEqual(constants.ambiguos_to_unambiguous("RYKMSWBDHVN{3"), "[AG][CT][GT][AC][GC][AT][CGT][AGT][ACT][ACG][ACGT][ACGT][ACGT]", "must be equal")
 			self.assertFail("Error, must throw exception")
 		except Exception:
 			pass
@@ -58,6 +58,15 @@ class Test(unittest.TestCase):
 			self.assertFail("Error, must throw exception")
 		except Exception:
 			pass
+	
+	def test_bit_dict(self):
+		
+		constants = Constants()
+		self.assertEqual({0 : 0b0001}, constants.ambiguos_to_unambiguous_dict_bit("A"))
+		self.assertEqual({0 : 0b0011}, constants.ambiguos_to_unambiguous_dict_bit("(A/C)"))
+		self.assertEqual({0 : 0b0011, 1 : 0b1111}, constants.ambiguos_to_unambiguous_dict_bit("(A/C)N"))
+		self.assertEqual({0 : 0b0011, 1 : 0b1111, 2 : 0b10000 }, constants.ambiguos_to_unambiguous_dict_bit("(A/C)N*"))
+		self.assertEqual({0 : 0b0011, 1 : 0b1111, 2 : 0b10000, 3 : 0b1001 }, constants.ambiguos_to_unambiguous_dict_bit("(A/C)N*W"))
 		
 	def testGet_diff_between_two_seq(self):
 		
