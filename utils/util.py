@@ -577,7 +577,7 @@ class Gene(object):
 		return self.strand == '+'
 	
 	def __str__(self):
-		return "Gene: {}   Position: {}:({}) {}-{}".format(self.name, self.chromosome,
+		return "Gene: {}  Position: {}:({}) {}-{}".format(self.name, self.chromosome,
 				self.strand, self.start, self.end)
 
 class Genes(object):
@@ -608,6 +608,10 @@ class Genes(object):
 					gene = Gene(gene_name, chr_name, position_start, position_end, line_gff['strand'])
 					if chr_name in self.dt_chromossomes: self.dt_chromossomes[chr_name].append(gene)
 					else: self.dt_chromossomes[chr_name] = [gene]
+					
+		### sort genes by start position
+		for chr_name in self.dt_chromossomes:
+			self.dt_chromossomes[chr_name] = sorted(self.dt_chromossomes[chr_name], key= lambda gene : gene.start)
 		
 	def get_genes(self, chromosome, size_window = -1):
 		"""
@@ -646,8 +650,10 @@ class Genes(object):
 		
 		vect_distances = []
 		vect_distances_till_windown = []
+		count_gene, count_genes_overlap = 0, 0
 		for key in self.dt_chromossomes:
 			for index, gene in enumerate(self.dt_chromossomes[key]):
+				count_gene += 1
 				if gene.is_forward():
 					if index == 0: continue
 					distance = self.dt_chromossomes[key][index].start - self.dt_chromossomes[key][index - 1].end
@@ -657,7 +663,10 @@ class Genes(object):
 				if distance > 0: vect_distances.append(distance if distance < max_distance else max_distance)
 				if distance < window and distance > 0: vect_distances_till_windown.append(distance)
 				if distance < 0:
-					print(distance, gene)
+					count_genes_overlap += 1
+					print("Distance:", distance, "##", gene, " -> ",
+						self.dt_chromossomes[key][index - 1] if gene.is_forward() \
+						else self.dt_chromossomes[key][index + 1])
 #		plt.hist(vect_distances, bins=number_bins)
 #		plt.title('Distance between genes')
 #		plt.ylabel('Number of genes')
@@ -668,10 +677,13 @@ class Genes(object):
 		plt.title('Distance between genes')
 		plt.ylabel('Number of genes')
 		plt.xlabel('Distance (distance < window {})'.format(window))
+		plt.text(10, 63, 'Occurrences: {}/{}'.format(len(vect_distances_till_windown), count_gene))
 		plt.savefig(os.path.splitext(out_file)[0] + "_less_than_window_{}".format(window) + \
 				os.path.splitext(out_file)[1])
-		
-		
+
+		## genes overlapped
+		print("Genes overlapped: {}/{}".format(count_genes_overlap, count_gene))
+
 	def collect_gene_affected(self, promotor_window):
 		"""
 		If some gene has less than the promoter window, it could be in 

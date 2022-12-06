@@ -205,7 +205,6 @@ class Test(unittest.TestCase):
 		
 		result_file_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files/results_2/" + Constants.FILE_NAME_RESULTS_STATS)
 		self.assertTrue(os.path.exists(result_file_name))
-		print(result_file_name, os.path.join(out_path, Constants.FILE_NAME_RESULTS_STATS))
 		self.assertTrue(self.utils.test_equal_files(result_file_name, os.path.join(out_path, Constants.FILE_NAME_RESULTS_STATS)))
 		
 		### get number of files inside Mrr1p_1 trans factor

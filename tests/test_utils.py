@@ -28,6 +28,7 @@ class Test(unittest.TestCase):
 		self.assertEqual(1, len(genes.dt_chromossomes))
 		self.assertEqual(19, len(genes.get_genes('Ca22chr1A_C_albicans_SC5314')))
 		self.assertEqual(10, len(genes.get_genes('Ca22chr1A_C_albicans_SC5314', 1000)))
+		self.assertEqual(8, len(genes.get_genes('Ca22chr1A_C_albicans_SC5314', 2000)))
 		#genes.print_all_genes_by_chr('Ca22chr1A_C_albicans_SC5314')
 	
 	def test_match_bit(self):
