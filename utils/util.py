@@ -6,7 +6,12 @@ Created on 13/11/2018
 from Bio import SeqIO
 from constants.constants import Constants
 from gff3tool.lib.gff3 import Gff3
-import matplotlib.pyplot as plt
+
+try:
+	import matplotlib.pyplot as plt
+except ModuleNotFoundError as e:
+	print("Warning: " + str(e))
+	
 import getpass, os, random, stat, gzip, re
 import sys, time
 

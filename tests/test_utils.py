@@ -77,6 +77,12 @@ class Test(unittest.TestCase):
 		self.assertEqual(1, len(vect_out))
 		self.assertEqual(TransFactorSmall("xpro3", "AAVV", 11), vect_out[0])
 		
+		post_start, sequence_fasta = 0, "CCTGCTAATTTAACAAAAACTAATAATTAAA"
+		trans_factor_1 = TransFactor("xpro3", "TGCTAATTTAACAAAAACTAATAATTA")
+		vect_out = trans_factor_1.get_match_bit(post_start, sequence_fasta)
+		self.assertEqual(1, len(vect_out))
+		self.assertEqual(TransFactorSmall("xpro3", "TGCTAATTTAACAAAAACTAATAATTA", 2), vect_out[0])
+
 if __name__ == "__main__":
 	#import sys;sys.argv = ['', 'Test.test_genes']
 	unittest.main()
